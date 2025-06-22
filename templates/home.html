@@ -24,6 +24,32 @@
     </div>
 </div>
 
+{% if active_tournament %}
+<div class="row">
+    <div class="col-12">
+        <div class="alert alert-warning">
+            <i class="fas fa-satellite-dish me-2"></i>
+            <strong>Live Tournament:</strong> {{ active_tournament.name }} is currently in progress.
+            <a href="{{ url_for('leaderboard', tournament_id=active_tournament.id) }}" class="btn btn-sm btn-warning ms-2">
+                <i class="fas fa-clipboard-list me-1"></i> Watch Live
+            </a>
+        </div>
+    </div>
+</div>
+{% elif next_available_tournament %}
+<div class="row">
+    <div class="col-12">
+        <div class="alert alert-info">
+            <i class="fas fa-calendar me-2"></i>
+            <strong>Next Up:</strong> {{ next_available_tournament.name }} at {{ next_available_tournament.course_name }} | {{ next_available_tournament.city }}, {{ next_available_tournament.state_country }}
+            <a href="{{ url_for('start_tournament', tournament_id=next_available_tournament.id) }}" class="btn btn-sm btn-success ms-2">
+                <i class="fas fa-play-circle me-1"></i> Start Tournament
+            </a>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 {% if error %}
 <div class="row">
     <div class="col-12">
@@ -59,18 +85,37 @@
             <div class="list-group list-group-flush">
                 {% for t in tournaments %}
                 <div class="list-group-item d-flex justify-content-between align-items-center">
-                    <div>
-                        <h5 class="mb-1">{{ t.name }}</h5>
-                        <small class="text-muted">{{ t.course_name }}</small>
+                    <div class="col-md-8">
+                        <h5 class="card-title">{{ t.name }}</h5>
+                        <p class="card-text text-muted">
+                            <i class="fas fa-map-marker-alt me-1"></i>
+                            {{ t.course_name }} | {{ t.city }}, {{ t.state_country }}
+                        </p>
+                        <p class="card-text">
+                            <small class="text-muted">
+                                <i class="fas fa-calendar me-1"></i>
+                                {{ t.start_date }}
+                            </small>
+                        </p>
                     </div>
                     <div>
                         <a href="{{ url_for('leaderboard', tournament_id=t.id) }}" class="btn btn-info btn-sm me-2">
                             <i class="fas fa-clipboard-list me-1"></i> View Leaderboard
                         </a>
                         {% if t.status == 'pending' %}
-                        <a href="{{ url_for('start_tournament', tournament_id=t.id) }}" class="btn btn-success btn-sm">
-                            <i class="fas fa-play-circle me-1"></i> Start Tournament
-                        </a>
+                            {% if active_tournament %}
+                            <button class="btn btn-secondary btn-sm" disabled title="Another tournament is currently active">
+                                <i class="fas fa-play-circle me-1"></i> Start Tournament
+                            </button>
+                            {% elif next_available_tournament and t.id == next_available_tournament.id %}
+                            <a href="{{ url_for('start_tournament', tournament_id=t.id) }}" class="btn btn-success btn-sm">
+                                <i class="fas fa-play-circle me-1"></i> Start Tournament
+                            </a>
+                            {% else %}
+                            <button class="btn btn-secondary btn-sm" disabled title="Tournaments must be started in sequence">
+                                <i class="fas fa-clock me-1"></i> Waiting
+                            </button>
+                            {% endif %}
                         {% elif t.status == 'active' %}
                         <a href="{{ url_for('leaderboard', tournament_id=t.id) }}" class="btn btn-danger btn-sm">
                             <i class="fas fa-satellite-dish me-1"></i> Live

@@ -32,9 +32,18 @@ def home():
     """Home page showing available tournaments from the database"""
     try:
         tournaments = db.get_all_tournaments()
-        return render_template('home.html', tournaments=tournaments)
+        active_tournament = db.get_active_tournament()
+        next_available_tournament = db.get_next_available_tournament()
+        return render_template('home.html', 
+                             tournaments=tournaments, 
+                             active_tournament=active_tournament,
+                             next_available_tournament=next_available_tournament)
     except Exception as e:
-        return render_template('home.html', tournaments=[], error=f"Error loading data: {str(e)}")
+        return render_template('home.html', 
+                             tournaments=[], 
+                             active_tournament=None, 
+                             next_available_tournament=None,
+                             error=f"Error loading data: {str(e)}")
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -170,6 +179,9 @@ def start_tournament(tournament_id):
         db.start_tournament(tournament_id)
         tournament = db.get_tournament_by_id(tournament_id)
         flash(f"Tournament {tournament['name']} has started!")
+    except ValueError as e:
+        # This is the specific error for multiple active tournaments
+        flash(f'Cannot start tournament: {str(e)}')
     except Exception as e:
         flash(f'Error starting tournament: {str(e)}')
     return redirect(url_for('home'))

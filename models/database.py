@@ -37,10 +37,10 @@ class Database:
         """Gets all available tournaments."""
         with self._get_connection() as conn:
             return conn.execute('''
-                SELECT t.*, c.name as course_name
+                SELECT t.*, c.name as course_name, c.city, c.state_country
                 FROM tournaments t
                 JOIN courses c ON t.course_id = c.id
-                ORDER BY t.start_date DESC
+                ORDER BY t.start_date ASC
             ''').fetchall()
 
     def get_tournament_by_id(self, tournament_id, conn=None):
@@ -56,12 +56,38 @@ class Database:
         with self._get_connection() as conn:
             return conn.execute("SELECT * FROM tournaments WHERE status = 'active'").fetchone()
 
+    def get_next_available_tournament(self):
+        """Gets the next tournament that can be started (first pending tournament in chronological order)."""
+        with self._get_connection() as conn:
+            return conn.execute('''
+                SELECT t.*, c.name as course_name, c.city, c.state_country
+                FROM tournaments t
+                JOIN courses c ON t.course_id = c.id
+                WHERE t.status = 'pending'
+                ORDER BY t.start_date ASC
+                LIMIT 1
+            ''').fetchone()
+
+    def can_start_tournament(self, tournament_id):
+        """Checks if a specific tournament can be started (it's the next in sequence)."""
+        next_tournament = self.get_next_available_tournament()
+        return next_tournament and next_tournament['id'] == tournament_id
+
     def start_tournament(self, tournament_id):
         """Sets a tournament to active and populates its player list."""
         with self._get_connection() as conn:
+            # Check if any tournament is already active
             active_tournament = conn.execute("SELECT id FROM tournaments WHERE status = 'active'").fetchone()
             if active_tournament:
                 raise ValueError(f"Tournament {active_tournament['id']} is already active. Only one tournament can run at a time.")
+            
+            # Check if this is the next tournament in sequence
+            if not self.can_start_tournament(tournament_id):
+                next_tournament = self.get_next_available_tournament()
+                if next_tournament:
+                    raise ValueError(f"Cannot start tournament {tournament_id}. The next tournament in sequence is {next_tournament['id']} ({next_tournament['name']}).")
+                else:
+                    raise ValueError("No tournaments are available to start.")
             
             conn.execute("UPDATE tournaments SET status = 'active', simulation_step = 0, current_round = 1 WHERE id = ?", (tournament_id,))
 
@@ -312,22 +338,29 @@ class Database:
                     'r4_info': round_scores[4],
                 })
 
-            # Sort players by score. This will keep them in their correct ranking
-            # even at the start of a new round.
-            leaderboard.sort(key=lambda x: (x['score_to_par'], x['total_strokes']))
+            # Sort players based on status and score.
+            # 1. Players who haven't started are sent to the bottom.
+            # 2. Cut players are sorted below active players.
+            # 3. Active players are sorted by score (to_par, then total_strokes).
+            leaderboard.sort(key=lambda x: (
+                not x['has_started_tournament'],  # False (0) comes before True (1)
+                1 if x['status'] == 'cut' else 0,
+                x['score_to_par'],
+                x['total_strokes']
+            ))
             
             pos = 0
             last_score = None
             for i, player in enumerate(leaderboard):
-                # Assign position to all players who are not cut
-                if player['status'] != 'cut':
-                    current_score = (player['score_to_par'], player['total_strokes'])
+                # Assign position only to players who are active and have started
+                if player['status'] != 'cut' and player['has_started_tournament']:
+                    current_score = player['score_to_par']
                     if current_score != last_score:
                         pos = i + 1
                         last_score = current_score
                     player['position'] = pos
                 else:
-                    # Explicitly set position to None for cut players
+                    # No position for cut players or those who haven't started
                     player['position'] = None
                 
             return leaderboard
@@ -413,7 +446,12 @@ def init_db():
             name TEXT NOT NULL,
             country TEXT,
             overall_skill REAL NOT NULL,
-            consistency REAL NOT NULL
+            driving_skill REAL NOT NULL,
+            approach_skill REAL NOT NULL,
+            short_game_skill REAL NOT NULL,
+            putting_skill REAL NOT NULL,
+            season_points INTEGER DEFAULT 0,
+            season_money REAL DEFAULT 0.0
         )
     ''')
 
@@ -421,9 +459,11 @@ def init_db():
         CREATE TABLE courses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            architecture_style TEXT NOT NULL, -- e.g., 'Penal', 'Strategic'
-            green_speed REAL NOT NULL, -- A modifier, e.g., 0.8 (slow) to 1.2 (fast)
-            rough_height REAL NOT NULL -- A modifier, e.g., 0.9 (low) to 1.1 (high)
+            type TEXT NOT NULL,
+            par REAL NOT NULL,
+            difficulty REAL NOT NULL,
+            city TEXT NOT NULL,
+            state_country TEXT NOT NULL
         )
     ''')
     
@@ -443,17 +483,18 @@ def init_db():
         CREATE TABLE tournaments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            course_id INTEGER,
-            start_date TEXT,
-            end_date TEXT,
-            status TEXT DEFAULT 'pending', -- pending, active, completed, cancelled
+            course_id INTEGER NOT NULL,
+            start_date TIMESTAMP NOT NULL,
+            end_date TIMESTAMP NOT NULL,
+            purse REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending', -- pending, active, completed, cancelled
             current_round INTEGER DEFAULT 1,
             simulation_step INTEGER DEFAULT 0,
-            cut_applied BOOLEAN DEFAULT 0,
             r2_start_step INTEGER DEFAULT 0,
             r3_start_step INTEGER DEFAULT 0,
             r4_start_step INTEGER DEFAULT 0,
-            regrouped_round4 BOOLEAN DEFAULT 0
+            cut_applied INTEGER DEFAULT 0,
+            FOREIGN KEY(course_id) REFERENCES courses(id)
         )
     ''')
 
