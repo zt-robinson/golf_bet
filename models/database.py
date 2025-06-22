@@ -224,7 +224,7 @@ class Database:
     def get_holes_for_course(self, course_id, conn=None):
         db_conn = conn or self._get_connection()
         try:
-            return db_conn.execute('SELECT * FROM holes WHERE course_id = ? ORDER BY hole_number', course_id).fetchall()
+            return db_conn.execute('SELECT * FROM holes WHERE course_id = ? ORDER BY hole_number', (course_id,)).fetchall()
         finally:
             if not conn:
                 db_conn.close()
