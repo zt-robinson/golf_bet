@@ -105,9 +105,11 @@ def leaderboard(tournament_id):
         # Determine if the current round is over to show the "Next Round" button
         round_is_over = False
         if tournament['status'] == 'active' and leaderboard_data:
-            min_holes_this_round = min(p['holes_played'] for p in leaderboard_data)
-            if min_holes_this_round >= 18:
-                round_is_over = True
+            # Check if all active players have finished the current round
+            active_players = [p for p in leaderboard_data if p['status'] != 'cut']
+            if active_players:
+                all_finished = all(p['holes_played'] >= 18 for p in active_players)
+                round_is_over = all_finished
 
         # After R2, the button should only appear AFTER the cut is applied.
         if tournament['current_round'] == 2 and not tournament['cut_applied']:
@@ -136,11 +138,19 @@ def next_round(tournament_id):
     next_round_num = current_round + 1
 
     if next_round_num > 4:
-        # End of tournament
+        # End of tournament - this is now handled by the simulation service
         return redirect(url_for('leaderboard', tournament_id=tournament_id))
     
-    # Note: If moving to R3, the cut and regrouping have already been applied automatically
-    # by the simulation service as soon as R2 was complete.
+    # --- New Logic for Round 4 Regrouping ---
+    if next_round_num == 4:
+        print("Regrouping players for the final round...")
+        # Get the current leaderboard to find players who made the cut
+        leaderboard = db.get_leaderboard_from_live_scores(tournament_id)
+        players_made_cut = [p for p in leaderboard if p['status'] != 'cut']
+        
+        # Regroup and set new tee times for Round 4
+        sim_service.regroup_players(tournament_id, 4, players_made_cut)
+        print("Players have been regrouped for Round 4.")
 
     # Record the simulation step when the next round is starting
     current_step = db.get_simulation_step(tournament_id)

@@ -4,14 +4,26 @@
 {{ super() }}
 <style>
     body {
-        background-color: #f8f9fa !important;
+        background-color: #212529 !important; /* Dark gray background */
+        color: #f8f9fa !important; /* Light text for the whole page */
     }
-    .score-negative { color: #d00 !important; }
-    .score-even { color: #080 !important; }
-    .score-positive { color: #333 !important; }
-    .countdown {
-        color: #6c757d;
+    .table-dark {
+        --bs-table-bg: #2b3035; /* Custom darker table background */
+        --bs-table-striped-bg: #343a40;
+    }
+    .cut-row {
+        color: #6c757d !important; /* Muted gray for cut player text */
         font-style: italic;
+    }
+    .cut-row:hover {
+        background-color: #343a40;
+    }
+    h1, .btn-link {
+        color: #f8f9fa !important;
+    }
+    .countdown {
+        color: #ffc107 !important; /* Yellow for countdown */
+        font-weight: bold;
     }
 </style>
 {% endblock %}
@@ -66,8 +78,8 @@
 </div>
 {% else %}
 <div class="table-responsive">
-    <table class="table table-hover table-striped">
-        <thead class="table-dark">
+    <table class="table table-dark table-striped table-hover">
+        <thead>
             <tr>
                 <th scope="col">Pos</th>
                 <th scope="col">Player</th>
@@ -81,9 +93,23 @@
         </thead>
         <tbody>
             {% for player in players %}
-            <tr class="{% if player.status == 'cut' %}fst-italic text-muted{% endif %}">
+            
+            {% set score_class = '' %}
+            {% if player.status != 'cut' and player.has_teed_off %}
+                {% if player.score_to_par < 0 %}
+                    {% set score_class = 'score-negative' %}
+                {% elif player.score_to_par == 0 %}
+                    {% set score_class = 'score-even' %}
+                {% else %}
+                    {% set score_class = 'score-positive' %}
+                {% endif %}
+            {% endif %}
+
+            <tr class="{% if player.status == 'cut' %}cut-row{% endif %}">
                 <td class="fw-bold">
-                    {% if player.position %}
+                    {% if player.status == 'cut' %}
+                        --
+                    {% elif player.has_started_tournament and player.position %}
                         {% set is_tied = false %}
                         {% if loop.previtem and player.position == loop.previtem.position %}
                             {% set is_tied = true %}
@@ -98,35 +124,102 @@
                     {% endif %}
                 </td>
                 <td>{{ player.player_name }}</td>
-                <td class="text-center fw-bold
-                    {% if player.score_to_par < 0 %}score-negative{% endif %}
-                    {% if player.score_to_par == 0 %}score-even{% endif %}
-                    {% if player.score_to_par > 0 %}score-positive{% endif %}
-                ">
-                    {% if player.score_to_par == 0 %}
-                        E
+                <td class="text-center fw-bold">
+                    {% if player.status == 'cut' %}
+                        CUT
+                    {% elif not player.has_started_tournament %}
+                        -
+                    {% elif player.score_to_par == 0 %}
+                        <span style="color: #28a745 !important;">E</span>
                     {% elif player.score_to_par > 0 %}
-                        +{{ player.score_to_par | int }}
+                        <span style="color: #f8f9fa !important;">+{{ player.score_to_par | int }}</span>
                     {% else %}
-                        {{ player.score_to_par | int }}
+                        <span style="color: #dc3545 !important;">{{ player.score_to_par | int }}</span>
                     {% endif %}
                 </td>
                 <td class="text-center">
-                    {% if player.holes_played > 0 %}
-                        {% if player.holes_played >= 18 %}F{% else %}{{ player.holes_played }}{% endif %}
+                    {% if player.status == 'cut' %}
+                        CUT
+                    {% elif not player.has_teed_off %}
+                        <span class="countdown" data-tee-time="{{ player.tee_time_step }}"></span>
+                    {% elif player.holes_played >= 18 %}
+                        F
                     {% else %}
-                        {% set seconds_until_tee = player.tee_time - simulation_step %}
-                        {% if seconds_until_tee > 0 %}
-                            <span class="countdown">{{ seconds_until_tee }}s</span>
-                        {% else %}
-                            <span class="countdown">Teeing off</span>
-                        {% endif %}
+                        {{ player.holes_played }}
                     {% endif %}
                 </td>
-                <td class="text-center">{{ player.r1_score_display if player.r1_score_display is not none else '-' }}</td>
-                <td class="text-center">{{ player.r2_score_display if player.r2_score_display is not none else '-' }}</td>
-                <td class="text-center">{{ player.r3_score_display if player.r3_score_display is not none else '-' }}</td>
-                <td class="text-center">{{ player.r4_score_display if player.r4_score_display is not none else '-' }}</td>
+                <td class="text-center">
+                    {% if player.r1_info.display is not none %}
+                        {% if player.r1_info.finished %}
+                            {{ player.r1_info.strokes }}
+                        {% else %}
+                            {% if player.r1_info.display == 'E' %}
+                                <span style="color: #28a745 !important;">E</span>
+                            {% elif player.r1_info.score_to_par > 0 %}
+                                <span style="color: #f8f9fa !important;">+{{ player.r1_info.score_to_par }}</span>
+                            {% else %}
+                                <span style="color: #dc3545 !important;">{{ player.r1_info.score_to_par }}</span>
+                            {% endif %}
+                        {% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    {% if player.r2_info.display is not none %}
+                        {% if player.r2_info.finished %}
+                            {{ player.r2_info.strokes }}
+                        {% else %}
+                            {% if player.r2_info.display == 'E' %}
+                                <span style="color: #28a745 !important;">E</span>
+                            {% elif player.r2_info.score_to_par > 0 %}
+                                <span style="color: #f8f9fa !important;">+{{ player.r2_info.score_to_par }}</span>
+                            {% else %}
+                                <span style="color: #dc3545 !important;">{{ player.r2_info.score_to_par }}</span>
+                            {% endif %}
+                        {% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    {% if player.status == 'cut' %}
+                        -
+                    {% elif player.r3_info.display is not none %}
+                        {% if player.r3_info.finished %}
+                            {{ player.r3_info.strokes }}
+                        {% else %}
+                            {% if player.r3_info.display == 'E' %}
+                                <span style="color: #28a745 !important;">E</span>
+                            {% elif player.r3_info.score_to_par > 0 %}
+                                <span style="color: #f8f9fa !important;">+{{ player.r3_info.score_to_par }}</span>
+                            {% else %}
+                                <span style="color: #dc3545 !important;">{{ player.r3_info.score_to_par }}</span>
+                            {% endif %}
+                        {% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    {% if player.status == 'cut' %}
+                        -
+                    {% elif player.r4_info.display is not none %}
+                        {% if player.r4_info.finished %}
+                            {{ player.r4_info.strokes }}
+                        {% else %}
+                            {% if player.r4_info.display == 'E' %}
+                                <span style="color: #28a745 !important;">E</span>
+                            {% elif player.r4_info.score_to_par > 0 %}
+                                <span style="color: #f8f9fa !important;">+{{ player.r4_info.score_to_par }}</span>
+                            {% else %}
+                                <span style="color: #dc3545 !important;">{{ player.r4_info.score_to_par }}</span>
+                            {% endif %}
+                        {% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
             </tr>
             {% endfor %}
         </tbody>
@@ -136,9 +229,47 @@
 
 {% if status == 'active' and not round_is_over %}
 <script>
-    setTimeout(() => {
+    // Update countdown timers
+    function updateCountdowns() {
+        const countdownElements = document.querySelectorAll('.countdown');
+        countdownElements.forEach(function(element) {
+            const teeTimeStep = parseInt(element.dataset.teeTime);
+            const currentStep = {{ simulation_step }};
+            const timeUntilTee = teeTimeStep - currentStep;
+            
+            if (timeUntilTee > 0) {
+                element.textContent = timeUntilTee + 's';
+            } else {
+                element.textContent = 'Teeing Off';
+            }
+        });
+    }
+    
+    // Set initial text for countdown elements
+    document.querySelectorAll('.countdown').forEach(function(element) {
+        const teeTimeStep = parseInt(element.dataset.teeTime);
+        const currentStep = {{ simulation_step }};
+        if (teeTimeStep > currentStep) {
+            element.textContent = (teeTimeStep - currentStep) + 's';
+        } else {
+            element.textContent = 'Teeing Off';
+        }
+    });
+
+    // Update countdowns every second
+    setInterval(updateCountdowns, 1000);
+    
+    // Auto-refresh the page
+    setTimeout(function() {
         window.location.reload();
-    }, 1000); // Refresh every 1 second
+    }, 1000);
+</script>
+{% elif status == 'active' and round_is_over and current_round == 4 %}
+<script>
+    // Final refresh to pick up status change to 'completed'
+    setTimeout(function() {
+        window.location.reload();
+    }, 1000);
 </script>
 {% endif %}
 
