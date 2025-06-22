@@ -43,9 +43,13 @@ class Database:
                 ORDER BY t.start_date DESC
             ''').fetchall()
 
-    def get_tournament_by_id(self, tournament_id):
-        with self._get_connection() as conn:
-            return conn.execute('SELECT * FROM tournaments WHERE id = ?', (tournament_id,)).fetchone()
+    def get_tournament_by_id(self, tournament_id, conn=None):
+        db_conn = conn or self._get_connection()
+        try:
+            return db_conn.execute('SELECT * FROM tournaments WHERE id = ?', (tournament_id,)).fetchone()
+        finally:
+            if not conn:
+                db_conn.close()
 
     def get_active_tournament(self):
         """Gets the currently active tournament, if any."""
@@ -55,60 +59,49 @@ class Database:
     def start_tournament(self, tournament_id):
         """Sets a tournament to active and populates its player list."""
         with self._get_connection() as conn:
-            # Check if there's already an active tournament
             active_tournament = conn.execute("SELECT id FROM tournaments WHERE status = 'active'").fetchone()
             if active_tournament:
                 raise ValueError(f"Tournament {active_tournament['id']} is already active. Only one tournament can run at a time.")
             
-            # 1. Set status to active and reset progress
-            conn.execute("UPDATE tournaments SET status = 'active' WHERE id = ?", (tournament_id,))
-            conn.execute("UPDATE tournaments SET simulation_step = 0 WHERE id = ?", (tournament_id,))
-            conn.execute("UPDATE tournaments SET current_round = 1 WHERE id = ?", (tournament_id,))
+            conn.execute("UPDATE tournaments SET status = 'active', simulation_step = 0, current_round = 1 WHERE id = ?", (tournament_id,))
 
-            # 2. Populate tournament_players
-            players = self.get_all_players() # Assumes you want all players in every tournament
+            players = self.get_all_players(conn=conn)
             
-            # Clear existing players for this tournament just in case
             conn.execute("DELETE FROM tournament_players WHERE tournament_id = ?", (tournament_id,))
 
-            # Assign players to tee groups (e.g., groups of 3)
             player_entries = []
             group_size = 3
             for i, player in enumerate(players):
                 tee_group = (i // group_size) + 1
                 player_entries.append((tournament_id, player['id'], tee_group))
             
-            conn.executemany('''
-                INSERT INTO tournament_players (tournament_id, player_id, tee_group)
-                VALUES (?, ?, ?)
-            ''', player_entries)
+            conn.executemany('INSERT INTO tournament_players (tournament_id, player_id, tee_group) VALUES (?, ?, ?)', player_entries)
+            
+            round_groups = {}
+            for _, player_id, tee_group in player_entries:
+                if tee_group not in round_groups:
+                    round_groups[tee_group] = []
+                round_groups[tee_group].append(player_id)
+            
+            self.save_round_groups(tournament_id, 1, round_groups, conn)
+            self.save_round_groups(tournament_id, 2, round_groups, conn)
             
             conn.commit()
 
     def complete_tournament(self, tournament_id):
         """Sets a tournament to completed and saves the final results."""
         with self._get_connection() as conn:
-            # 1. Set status to completed
             conn.execute("UPDATE tournaments SET status = 'completed' WHERE id = ?", (tournament_id,))
-
-            # 2. Get the final leaderboard with correct scores and positions
-            final_leaderboard = self.get_leaderboard_from_live_scores(tournament_id)
+            final_leaderboard = self.get_leaderboard_from_live_scores(tournament_id, conn=conn)
             
             results_to_save = []
             for result in final_leaderboard:
                 results_to_save.append((
-                    tournament_id,
-                    result['player_id'],
-                    result['total_strokes'],
-                    result['score_to_par'],
-                    result['position'],
-                    result.get('r1_score_strokes'),
-                    result.get('r2_score_strokes'),
-                    result.get('r3_score_strokes'),
-                    result.get('r4_score_strokes')
+                    tournament_id, result['player_id'], result['total_strokes'], result['score_to_par'],
+                    result['position'], result.get('r1_score_strokes'), result.get('r2_score_strokes'),
+                    result.get('r3_score_strokes'), result.get('r4_score_strokes')
                 ))
 
-            # Clear old results and save new ones
             conn.execute("DELETE FROM tournament_results WHERE tournament_id = ?", (tournament_id,))
             conn.executemany('''
                 INSERT INTO tournament_results (tournament_id, player_id, total_strokes, score_to_par, position, r1_score, r2_score, r3_score, r4_score)
@@ -117,392 +110,274 @@ class Database:
             conn.commit()
 
     def get_tournament_results(self, tournament_id):
-        """Gets the final results for a completed tournament."""
         with self._get_connection() as conn:
             return conn.execute('''
-                SELECT r.*, p.name as player_name
-                FROM tournament_results r
-                JOIN players p ON r.player_id = p.id
-                WHERE r.tournament_id = ?
+                SELECT r.*, p.name as player_name FROM tournament_results r
+                JOIN players p ON r.player_id = p.id WHERE r.tournament_id = ?
                 ORDER BY r.position, p.name
             ''', (tournament_id,)).fetchall()
 
     def get_player_by_id(self, player_id):
-        """Gets a player by their ID."""
         with self._get_connection() as conn:
             return conn.execute('SELECT * FROM players WHERE id = ?', (player_id,)).fetchone()
 
     def is_cut_applied(self, tournament_id):
-        """Check if the cut has been applied to a tournament."""
         with self._get_connection() as conn:
             result = conn.execute('SELECT cut_applied FROM tournaments WHERE id = ?', (tournament_id,)).fetchone()
             return result and result['cut_applied']
 
-    def apply_cut(self, tournament_id, players_made_cut_ids):
-        """
-        Updates player statuses based on the cut and marks the cut as applied for the tournament.
-        """
-        with self._get_connection() as conn:
-            # First, set all players in the tournament to 'cut'
-            conn.execute("UPDATE tournament_players SET status = 'cut' WHERE tournament_id = ?", (tournament_id,))
-
-            # Then, set the players who made the cut back to 'active'
-            # This is safer than looping through players to cut, especially with large rosters.
+    def apply_cut(self, tournament_id, players_made_cut_ids, conn=None):
+        db_conn = conn or self._get_connection()
+        try:
+            db_conn.execute("UPDATE tournament_players SET status = 'cut' WHERE tournament_id = ?", (tournament_id,))
             if players_made_cut_ids:
-                # Create a placeholder string for the IN clause, e.g., (?, ?, ?)
                 placeholders = ', '.join('?' for _ in players_made_cut_ids)
                 query = f"UPDATE tournament_players SET status = 'active' WHERE tournament_id = ? AND player_id IN ({placeholders})"
-                
-                # The parameters must be a single tuple: (tournament_id, player_id1, player_id2, ...)
                 params = (tournament_id,) + tuple(players_made_cut_ids)
-                conn.execute(query, params)
-
-            # Finally, mark the cut as applied for the tournament
-            conn.execute("UPDATE tournaments SET cut_applied = 1 WHERE id = ?", (tournament_id,))
-            conn.commit()
+                db_conn.execute(query, params)
+            db_conn.execute("UPDATE tournaments SET cut_applied = 1 WHERE id = ?", (tournament_id,))
+            if not conn:
+                db_conn.commit()
+        finally:
+            if not conn:
+                db_conn.close()
 
     def is_regrouped_for_round4(self, tournament_id):
-        """Check if players have been regrouped for round 4."""
         with self._get_connection() as conn:
             result = conn.execute('SELECT regrouped_round4 FROM tournaments WHERE id = ?', (tournament_id,)).fetchone()
             return result and result['regrouped_round4']
 
     def get_round_groups(self, tournament_id, round_num):
-        """Get the group assignments for a specific round."""
         with self._get_connection() as conn:
             if round_num <= 2:
-                # For rounds 1-2, use original tournament_players groupings
-                results = conn.execute('''
-                    SELECT tp.tee_group as group_num, tp.player_id
-                    FROM tournament_players tp
-                    WHERE tp.tournament_id = ?
-                    ORDER BY tp.tee_group, tp.player_id
-                ''', (tournament_id,)).fetchall()
+                results = conn.execute('SELECT tp.tee_group as group_num, tp.player_id FROM tournament_players tp WHERE tp.tournament_id = ? ORDER BY tp.tee_group, tp.player_id', (tournament_id,)).fetchall()
             else:
-                # For rounds 3-4, use round_groups table
-                results = conn.execute('''
-                    SELECT rg.group_num, rg.player_id
-                    FROM round_groups rg
-                    WHERE rg.tournament_id = ? AND rg.round_num = ?
-                    ORDER BY rg.group_num, rg.player_id
-                ''', (tournament_id, round_num)).fetchall()
+                results = conn.execute('SELECT rg.group_num, rg.player_id FROM round_groups rg WHERE rg.tournament_id = ? AND rg.round_num = ? ORDER BY rg.group_num, rg.player_id', (tournament_id, round_num)).fetchall()
             
-            # Group by group_num
-            groups = {}
+            groups = defaultdict(list)
             for row in results:
-                group_num = row['group_num']
-                if group_num not in groups:
-                    groups[group_num] = []
-                groups[group_num].append(row['player_id'])
-            
-            # Convert to list of tuples
-            return [(group_num, player_ids) for group_num, player_ids in groups.items()]
+                groups[row['group_num']].append(row['player_id'])
+            return list(groups.items())
 
-    def save_round_groups(self, tournament_id, round_num, groups):
-        """Save group assignments for a specific round."""
-        with self._get_connection() as conn:
-            # Clear existing groups for this round
-            conn.execute('DELETE FROM round_groups WHERE tournament_id = ? AND round_num = ?', 
-                        (tournament_id, round_num))
-            
-            # Save new groups
-            for group_num, player_ids in groups:
+    def save_round_groups(self, tournament_id, round_num, groups, conn=None):
+        db_conn = conn or self._get_connection()
+        try:
+            db_conn.execute('DELETE FROM round_groups WHERE tournament_id = ? AND round_num = ?', (tournament_id, round_num))
+            to_insert = []
+            for group_num, player_ids in groups.items():
                 for player_id in player_ids:
-                    conn.execute('''
-                        INSERT INTO round_groups (tournament_id, round_num, group_num, player_id)
-                        VALUES (?, ?, ?, ?)
-                    ''', (tournament_id, round_num, group_num, player_id))
-            
-            # Mark round 4 as regrouped if applicable
+                    to_insert.append((tournament_id, round_num, group_num, player_id))
+            db_conn.executemany('INSERT INTO round_groups (tournament_id, round_num, group_num, player_id) VALUES (?, ?, ?, ?)', to_insert)
             if round_num == 4:
-                conn.execute('UPDATE tournaments SET regrouped_round4 = 1 WHERE id = ?', (tournament_id,))
+                db_conn.execute('UPDATE tournaments SET regrouped_round4 = 1 WHERE id = ?', (tournament_id,))
+            if not conn:
+                db_conn.commit()
+        finally:
+            if not conn:
+                db_conn.close()
+
+    def get_course_by_id(self, course_id, conn=None):
+        db_conn = conn or self._get_connection()
+        try:
+            return db_conn.execute('SELECT * FROM courses WHERE id = ?', (course_id,)).fetchone()
+        finally:
+            if not conn:
+                db_conn.close()
             
-            conn.commit()
+    def get_holes_for_course(self, course_id, conn=None):
+        db_conn = conn or self._get_connection()
+        try:
+            return db_conn.execute('SELECT * FROM holes WHERE course_id = ? ORDER BY hole_number', (course_id,)).fetchall()
+        finally:
+            if not conn:
+                db_conn.close()
 
-    def get_course_by_id(self, course_id):
-        with self._get_connection() as conn:
-            return conn.execute('SELECT * FROM courses WHERE id = ?', (course_id,)).fetchone()
-            
-    def get_holes_for_course(self, course_id):
-        with self._get_connection() as conn:
-            return conn.execute('SELECT * FROM holes WHERE course_id = ? ORDER BY hole_number', (course_id,)).fetchall()
+    def get_all_players(self, conn=None):
+        db_conn = conn or self._get_connection()
+        try:
+            return db_conn.execute('SELECT * FROM players ORDER BY overall_skill DESC').fetchall()
+        finally:
+            if not conn:
+                db_conn.close()
 
-    # --- Player Functions ---
-    def get_all_players(self):
-        with self._get_connection() as conn:
-            return conn.execute('SELECT * FROM players ORDER BY overall_skill DESC').fetchall()
-
-    def get_tournament_players(self, tournament_id, round_num=None):
-        """
-        Gets all players for a given tournament.
-        If round_num is provided, it fetches the tee_group for that specific round.
-        Otherwise, it defaults to the initial tee_group.
-        """
-        with self._get_connection() as conn:
-            if round_num:
-                # Get players and their group for a specific round
-                return conn.execute('''
-                    SELECT p.*, rg.group_num as tee_group, tp.status
-                    FROM players p
+    def get_tournament_players(self, tournament_id, round_num=None, conn=None):
+        db_conn = conn or self._get_connection()
+        try:
+            if round_num and round_num > 2:
+                # For rounds 3 & 4, use round_groups which has been re-sorted
+                return db_conn.execute('''
+                    SELECT p.*, rg.group_num as tee_group, tp.status FROM players p
                     JOIN round_groups rg ON p.id = rg.player_id
                     JOIN tournament_players tp ON p.id = tp.player_id AND tp.tournament_id = rg.tournament_id
-                    WHERE rg.tournament_id = ? AND rg.round_num = ?
-                    ORDER BY rg.group_num
+                    WHERE rg.tournament_id = ? AND rg.round_num = ? ORDER BY rg.group_num
                 ''', (tournament_id, round_num)).fetchall()
             else:
-                # Get players with their initial tee_group
-                return conn.execute('''
-                    SELECT p.*, tp.tee_group, tp.status
-                    FROM players p
+                # For rounds 1 & 2 (or if no round specified), use the original tee_group
+                return db_conn.execute('''
+                    SELECT p.*, tp.tee_group, tp.status FROM players p
                     JOIN tournament_players tp ON p.id = tp.player_id
-                    WHERE tp.tournament_id = ?
-                    ORDER BY tp.tee_group
+                    WHERE tp.tournament_id = ? ORDER BY tp.tee_group
                 ''', (tournament_id,)).fetchall()
+        finally:
+            if not conn:
+                db_conn.close()
 
-    def get_live_scores_for_tournament(self, tournament_id):
-        """Gets all raw live scores for a given tournament."""
-        with self._get_connection() as conn:
-            return conn.execute('''
-                SELECT * FROM live_scores
-                WHERE tournament_id = ?
-            ''', (tournament_id,)).fetchall()
+    def get_live_scores_for_tournament(self, tournament_id, conn=None):
+        db_conn = conn or self._get_connection()
+        try:
+            return db_conn.execute('SELECT * FROM live_scores WHERE tournament_id = ?', (tournament_id,)).fetchall()
+        finally:
+            if not conn:
+                db_conn.close()
 
     def get_live_scores_for_hole(self, tournament_id, round_num, hole_num):
-        """Gets all raw live scores for a specific hole in a tournament."""
         with self._get_connection() as conn:
-            return conn.execute('''
-                SELECT * FROM live_scores
-                WHERE tournament_id = ? AND round = ? AND hole = ?
-            ''', (tournament_id, round_num, hole_num)).fetchall()
+            return conn.execute('SELECT * FROM live_scores WHERE tournament_id = ? AND round = ? AND hole = ?',
+                                (tournament_id, round_num, hole_num)).fetchall()
 
-    # --- Live Score & Leaderboard Functions ---
-    def get_leaderboard_from_live_scores(self, tournament_id):
-        """
-        Constructs a leaderboard with detailed live scoring.
-        - For rounds in progress, it shows the "to par" score for that round.
-        - For completed rounds, it shows the final stroke count.
-        """
-        with self._get_connection() as conn:
-            tournament = conn.execute('SELECT * FROM tournaments WHERE id = ?', (tournament_id,)).fetchone()
-            if not tournament: return []
-
-            # Fetch players based on the current round's grouping
-            players = self.get_tournament_players(tournament_id, tournament['current_round'])
-            if not players:
-                # Fallback to initial groups if round-specific groups don't exist
-                players = self.get_tournament_players(tournament_id)
-
+    def get_leaderboard_from_live_scores(self, tournament_id, conn=None):
+        db_conn = conn or self._get_connection()
+        try:
+            tournament_info = self.get_tournament_by_id(tournament_id, conn=db_conn)
+            current_round = tournament_info['current_round'] if tournament_info else 1
+            
+            players = self.get_tournament_players(tournament_id, current_round, conn=db_conn)
             if not players: return []
 
-            holes = conn.execute('SELECT hole_number, par FROM holes WHERE course_id = ? ORDER BY hole_number', (tournament['course_id'],)).fetchall()
-            hole_pars = {hole['hole_number']: hole['par'] for hole in holes}
+            scores = self.get_live_scores_for_tournament(tournament_id, conn=db_conn)
+            holes = self.get_holes_for_course(tournament_info['course_id'], conn=db_conn)
             
-            live_scores = self.get_live_scores_for_tournament(tournament_id)
+            hole_pars = {h['hole_number']: h['par'] for h in holes}
             scores_by_player = defaultdict(list)
-            for score in live_scores:
-                scores_by_player[score['player_id']].append(score)
+            for s in scores:
+                scores_by_player[s['player_id']].append(s)
 
             leaderboard = []
-            for player in players:
-                player_scores = scores_by_player.get(player['id'], [])
-                
+            for p in players:
+                player_scores = scores_by_player[p['id']]
                 total_strokes = sum(s['score'] for s in player_scores)
-                holes_played_total = len(player_scores)
-                
                 par_for_holes_played = sum(hole_pars.get(s['hole'], 4) for s in player_scores)
-                score_to_par_total = total_strokes - par_for_holes_played
-
-                # Calculate round scores
+                
+                # Calculate round scores relative to par
                 round_scores = {}
                 for i in range(1, 5):
-                    round_scores[i] = self._calculate_round_score(player_scores, i, hole_pars)
-                
-                if player['status'] == 'cut':
-                    round_scores[3]['display'] = 'CUT'
-                    round_scores[4]['display'] = 'CUT'
-
-                # Determine THRU value for the current round
-                holes_in_current_round = len([s for s in player_scores if s['round'] == tournament['current_round']])
-
-                leaderboard.append({
-                    'player_id': player['id'],
-                    'player_name': player['name'],
-                    'tee_group': player['tee_group'],
-                    'status': player['status'],
-                    'total_strokes': total_strokes,
-                    'score_to_par': score_to_par_total,
-                    'holes_played': holes_in_current_round,
-                    'tee_time': self.get_player_tee_time(player['tee_group'], tournament['current_round'], tournament),
-                    'r1_score_display': round_scores[1]['display'],
-                    'r1_score_strokes': round_scores[1]['strokes'],
-                    'r2_score_display': round_scores[2]['display'],
-                    'r2_score_strokes': round_scores[2]['strokes'],
-                    'r3_score_display': round_scores[3]['display'],
-                    'r3_score_strokes': round_scores[3]['strokes'],
-                    'r4_score_display': round_scores[4]['display'],
-                    'r4_score_strokes': round_scores[4]['strokes'],
-                })
-            
-            # --- Leaderboard Sorting ---
-            # Determine the sorting key for each player.
-            # This complex key ensures players are grouped correctly:
-            # 1. Active players, sorted by score.
-            # 2. Cut players, sorted by score.
-            # 3. (In R1 only) Players yet to tee off, sorted by tee time.
-            def get_sort_key(p):
-                if p['status'] == 'cut':
-                    return (1, p['score_to_par'], p['total_strokes']) # Group 1: Cut players
-                if tournament['current_round'] == 1 and p['holes_played'] == 0:
-                    return (2, p['tee_time']) # Group 2: Waiting players (only in R1)
-                return (0, p['score_to_par'], p['total_strokes']) # Group 0: Active players
-
-            leaderboard.sort(key=get_sort_key)
-
-            # Recalculate positions after sorting
-            if leaderboard:
-                last_pos = 0
-                last_score = -999
-                for i, player in enumerate(leaderboard):
-                    # Only assign position to non-cut players
-                    if player['status'] != 'cut':
-                        current_score = (player['score_to_par'], player['total_strokes'])
-                        if current_score == last_score:
-                            player['position'] = last_pos
-                        else:
-                            player['position'] = i + 1
-                            last_pos = player['position']
-                        last_score = current_score
+                    round_player_scores = [s for s in player_scores if s['round'] == i]
+                    is_finished = len(round_player_scores) >= 18
+                    
+                    if round_player_scores:
+                        round_strokes = sum(s['score'] for s in round_player_scores)
+                        round_par = sum(hole_pars.get(s['hole'], 4) for s in round_player_scores)
+                        round_score_to_par = round_strokes - round_par
+                        
+                        display_val = round_score_to_par
+                        if not is_finished:
+                            if round_score_to_par == 0:
+                                display_val = 'E'
+                        
+                        round_scores[i] = {
+                            'strokes': round_strokes, 
+                            'score_to_par': round_score_to_par,
+                            'display': display_val,
+                            'finished': is_finished
+                        }
                     else:
-                        player['position'] = '' # No position for cut players
-            return leaderboard
+                        round_scores[i] = {'strokes': None, 'score_to_par': None, 'display': None, 'finished': False}
 
-    def _calculate_round_score(self, player_scores, round_num, hole_pars):
-        """
-        Calculates the score for a single round. Returns to-par if in progress,
-        or total strokes if complete.
-        """
-        scores_in_round = [s for s in player_scores if s['round'] == round_num]
-        if not scores_in_round:
-            return {'display': None, 'strokes': None}
+                # Calculate current round holes played
+                current_round_holes = len([s for s in player_scores if s['round'] == current_round])
+                
+                # Determine if player has teed off IN THIS ROUND (for THRU column)
+                has_teed_off = current_round_holes > 0
 
-        strokes = sum(s['score'] for s in scores_in_round)
-        holes_played_in_round = len(scores_in_round)
+                # Determine if player has started THE TOURNAMENT (for Pos and To Par)
+                has_started_tournament = len(player_scores) > 0
+                
+                # Calculate tee time, adjusted for the start step of the current round
+                round_start_step = 0
+                if current_round > 1:
+                    round_start_step = tournament_info.get(f'r{current_round}_start_step', 0)
+                tee_time_step = round_start_step + (p['tee_group'] - 1)
+                
+                leaderboard.append({
+                    'player_id': p['id'], 'player_name': p['name'], 'status': p['status'],
+                    'total_strokes': total_strokes, 'score_to_par': total_strokes - par_for_holes_played,
+                    'holes_played': current_round_holes,
+                    'tee_group': p['tee_group'],
+                    'has_teed_off': has_teed_off,
+                    'has_started_tournament': has_started_tournament,
+                    'tee_time_step': tee_time_step,
+                    'r1_info': round_scores[1],
+                    'r2_info': round_scores[2],
+                    'r3_info': round_scores[3],
+                    'r4_info': round_scores[4],
+                })
 
-        if holes_played_in_round < 18:
-            # Round in progress, calculate to_par
-            par_for_round = sum(hole_pars.get(s['hole'], 4) for s in scores_in_round)
-            to_par = strokes - par_for_round
+            # Sort players by score. This will keep them in their correct ranking
+            # even at the start of a new round.
+            leaderboard.sort(key=lambda x: (x['score_to_par'], x['total_strokes']))
             
-            display_score = "E" if to_par == 0 else f"+{to_par}" if to_par > 0 else str(to_par)
-            return {'display': display_score, 'strokes': None} # Strokes are not final yet
-        else:
-            # Round complete, return total strokes
-            return {'display': str(strokes), 'strokes': strokes}
+            pos = 0
+            last_score = None
+            for i, player in enumerate(leaderboard):
+                # Assign position to all players who are not cut
+                if player['status'] != 'cut':
+                    current_score = (player['score_to_par'], player['total_strokes'])
+                    if current_score != last_score:
+                        pos = i + 1
+                        last_score = current_score
+                    player['position'] = pos
+                else:
+                    # Explicitly set position to None for cut players
+                    player['position'] = None
+                
+            return leaderboard
+        finally:
+            if not conn:
+                db_conn.close()
+
+    def count_players_finished_round(self, tournament_id, round_num, conn=None):
+        db_conn = conn or self._get_connection()
+        try:
+            active_players = db_conn.execute("SELECT player_id FROM tournament_players WHERE tournament_id = ? AND status = 'active'", (tournament_id,)).fetchall()
+            if not active_players: return 0
+            player_ids = [p['player_id'] for p in active_players]
+            placeholders = ','.join('?' for _ in player_ids)
+            query = f'SELECT player_id, COUNT(hole) as holes_played FROM live_scores WHERE tournament_id = ? AND round = ? AND player_id IN ({placeholders}) GROUP BY player_id'
+            params = (tournament_id, round_num) + tuple(player_ids)
+            results = db_conn.execute(query, params).fetchall()
+            return sum(1 for r in results if r['holes_played'] >= 18)
+        finally:
+            if not conn:
+                db_conn.close()
 
     def save_live_score(self, tournament_id, player_id, round_num, hole_num, score):
-        """Saves a single score for a player on a specific hole."""
         with self._get_connection() as conn:
-            conn.execute('''
-                INSERT OR REPLACE INTO live_scores (tournament_id, player_id, round, hole, score)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (tournament_id, player_id, round_num, hole_num, score))
+            conn.execute('INSERT OR REPLACE INTO live_scores (tournament_id, player_id, round, hole, score) VALUES (?, ?, ?, ?, ?)',
+                         (tournament_id, player_id, round_num, hole_num, score))
             conn.commit()
-
-    def get_player_scores_in_round(self, tournament_id, player_id, round_num):
-        """Get all scores for a player in a specific round."""
-        with self._get_connection() as conn:
-            return conn.execute('''
-                SELECT * FROM live_scores 
-                WHERE tournament_id = ? AND player_id = ? AND round = ?
-                ORDER BY hole
-            ''', (tournament_id, player_id, round_num)).fetchall()
-            
-    def count_players_finished_round(self, tournament_id, round_num):
-        """Counts how many players have finished all 18 holes in a given round."""
-        with self._get_connection() as conn:
-            result = conn.execute('''
-                SELECT COUNT(player_id)
-                FROM (
-                    SELECT player_id
-                    FROM live_scores
-                    WHERE tournament_id = ? AND round = ?
-                    GROUP BY player_id
-                    HAVING COUNT(hole) >= 18
-                )
-            ''', (tournament_id, round_num)).fetchone()
-            return result[0] if result else 0
-
-    # --- Betting Functions (Placeholder) ---
-    def place_bet(self, user_id, tournament_id, player_id, bet_amount, odds):
-        # This is a simplified version. A real implementation would be more complex.
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            # Deduct from balance
-            cursor.execute('UPDATE users SET virtual_balance = virtual_balance - ? WHERE id = ?', (bet_amount, user_id))
-            # Place bet
-            cursor.execute('''
-                INSERT INTO bets (user_id, tournament_id, player_id, bet_amount, odds)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (user_id, tournament_id, player_id, bet_amount, odds))
-            conn.commit()
-            return cursor.lastrowid
 
     def get_simulation_step(self, tournament_id):
-        """Gets the current simulation step for a tournament."""
         with self._get_connection() as conn:
             result = conn.execute('SELECT simulation_step FROM tournaments WHERE id = ?', (tournament_id,)).fetchone()
             return result['simulation_step'] if result else 0
 
     def set_simulation_step(self, tournament_id, step):
-        """Sets the simulation step for a tournament."""
         with self._get_connection() as conn:
             conn.execute('UPDATE tournaments SET simulation_step = ? WHERE id = ?', (step, tournament_id))
             conn.commit()
 
-    def set_current_round(self, tournament_id, round_num):
-        """Sets the current round for a tournament."""
-        with self._get_connection() as conn:
-            conn.execute('UPDATE tournaments SET current_round = ? WHERE id = ?', (round_num, tournament_id))
-            conn.commit()
-
-    def get_player_tee_time(self, player_tee_group, current_round, tournament_data):
-        """
-        Calculate the simulation step when a player's group will tee off.
-        """
-        round_start_step = tournament_data.get(f'r{current_round}_start_step', 0)
-        # In this simulation, group interval is 1 step.
-        # Group N tees off N-1 steps after the round starts.
-        group_interval = 1 
-        tee_time = round_start_step + (player_tee_group - 1) * group_interval
-        return tee_time
-
     def set_round_start_step(self, tournament_id, round_num, step):
-        """Sets the simulation step at which a round started."""
         with self._get_connection() as conn:
-            # It's safer to use a whitelist of column names than to format it directly
-            # to prevent SQL injection, though in this case it's internally controlled.
-            if round_num in [2, 3, 4]:
-                col_name = f'r{round_num}_start_step'
+            col_name = f'r{round_num}_start_step'
+            if col_name in ['r2_start_step', 'r3_start_step', 'r4_start_step']:
                 conn.execute(f'UPDATE tournaments SET {col_name} = ? WHERE id = ?', (step, tournament_id))
                 conn.commit()
 
-    def get_players_in_group(self, tournament_id, round_num, group_num):
-        """Gets all player data for a specific group in a specific round."""
+    def set_current_round(self, tournament_id, round_num):
         with self._get_connection() as conn:
-            return conn.execute('''
-                SELECT p.*, tp.status
-                FROM players p
-                JOIN round_groups rg ON p.id = rg.player_id
-                JOIN tournament_players tp ON p.id = tp.player_id AND tp.tournament_id = rg.tournament_id
-                WHERE rg.tournament_id = ? AND rg.round_num = ? AND rg.group_num = ?
-            ''', (tournament_id, round_num, group_num)).fetchall()
-
-    def get_hole_info(self, course_id, hole_number):
-        """Gets the par and difficulty for a specific hole."""
-        with self._get_connection() as conn:
-            return conn.execute('SELECT par, difficulty_modifier FROM holes WHERE course_id = ? AND hole_number = ?', (course_id, hole_number)).fetchone()
-
-# Instantiate the database handler
+            conn.execute('UPDATE tournaments SET current_round = ? WHERE id = ?', (round_num, tournament_id))
+            conn.commit()
+            
 db = Database()
 
 def init_db():
