@@ -6,19 +6,29 @@ import datetime
 class SimulationService:
     """Handles the logic for simulating golf tournaments."""
 
-    def _calculate_hole_score(self, player_skill, player_consistency, hole_par, hole_difficulty):
+    def _calculate_hole_score(self, player_skills, hole_par, hole_difficulty):
         """
-        Calculates a player's score for a single hole.
-        Fixed scoring algorithm for realistic golf scores.
+        Calculates a player's score for a single hole using the new detailed skill system.
         """
+        # Extract skills from the player data
+        overall_skill = player_skills['overall_skill']
+        driving_skill = player_skills['driving_skill']
+        approach_skill = player_skills['approach_skill']
+        short_game_skill = player_skills['short_game_skill']
+        putting_skill = player_skills['putting_skill']
+        
+        # Calculate a weighted skill score based on hole type
+        # For simplicity, we'll use a weighted average of all skills
+        weighted_skill = (overall_skill * 0.3 + driving_skill * 0.25 + approach_skill * 0.25 + 
+                         short_game_skill * 0.15 + putting_skill * 0.05)
+        
         # Base score tendency (lower is better)
         # Higher skill means a score closer to par, but not dramatically better
-        skill_bonus = (player_skill - 75) / 100.0  # e.g. skill 85 -> +0.1, skill 95 -> +0.2
+        skill_bonus = (weighted_skill - 75) / 100.0  # e.g. skill 85 -> +0.1, skill 95 -> +0.2
         base_tendency = hole_par - skill_bonus
 
-        # Consistency defines the variance
-        # Higher consistency means less variance from the base tendency
-        consistency_factor = (100 - player_consistency) / 100.0  # e.g. consistency 90 -> 0.1
+        # Use overall skill as a consistency factor (higher skill = more consistent)
+        consistency_factor = (100 - weighted_skill) / 100.0  # e.g. skill 90 -> 0.1
         
         # Introduce more randomness to allow for bogeys and worse
         random_factor = random.uniform(-3.0, 3.0) * consistency_factor
@@ -130,12 +140,11 @@ class SimulationService:
         if hole_num <= len(holes):
             hole_info = holes[hole_num - 1]
             return self._calculate_hole_score(
-                player['overall_skill'],
-                player['consistency'],
+                player,
                 hole_info['par'],
                 hole_info['difficulty_modifier']
             )
-        return 4  # Default fallback 
+        return 4  # Default fallback
 
     def regroup_players(self, tournament_id, round_num, players_to_group, conn=None):
         """
