@@ -1,0 +1,6 @@
+Flask==2.2.2
+Faker==18.4.0
+Flask-APScheduler==1.12.4
+requests
+beautifulsoup4
+python-dotenv

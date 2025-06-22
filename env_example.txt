@@ -1,0 +1,5 @@
+# SportsDataIO API Configuration
+SPORTSDATA_API_KEY=your_api_key_here
+
+# Flask App Configuration
+SECRET_KEY=your-secret-key-here 

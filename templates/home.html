@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Fictional Golf Tour{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-body text-center">
+                <h1 class="card-title">
+                    <i class="fas fa-golf-ball me-3"></i>
+                    Fictional Golf Tour
+                </h1>
+                <p class="card-text lead">
+                    A completely simulated golf league. Run simulations and watch the drama unfold.
+                </p>
+                {% if not session.user_id %}
+                <a href="{{ url_for('login') }}" class="btn btn-primary btn-lg">
+                    <i class="fas fa-sign-in-alt me-2"></i>Login to Get Started
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if error %}
+<div class="row">
+    <div class="col-12">
+        <div class="alert alert-danger">
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            {{ error }}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if message %}
+<div class="row">
+    <div class="col-12">
+        <div class="alert alert-info">
+            <i class="fas fa-info-circle me-2"></i>
+            {{ message }}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if tournaments %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="mb-0">
+                    <i class="fas fa-trophy me-2"></i>
+                    2025 Season Schedule
+                </h3>
+            </div>
+            <div class="list-group list-group-flush">
+                {% for t in tournaments %}
+                <div class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="mb-1">{{ t.name }}</h5>
+                        <small class="text-muted">{{ t.course_name }}</small>
+                    </div>
+                    <div>
+                        <a href="{{ url_for('leaderboard', tournament_id=t.id) }}" class="btn btn-info btn-sm me-2">
+                            <i class="fas fa-clipboard-list me-1"></i> View Leaderboard
+                        </a>
+                        {% if t.status == 'pending' %}
+                        <a href="{{ url_for('start_tournament', tournament_id=t.id) }}" class="btn btn-success btn-sm">
+                            <i class="fas fa-play-circle me-1"></i> Start Tournament
+                        </a>
+                        {% elif t.status == 'active' %}
+                        <a href="{{ url_for('leaderboard', tournament_id=t.id) }}" class="btn btn-danger btn-sm">
+                            <i class="fas fa-satellite-dish me-1"></i> Live
+                        </a>
+                        {% elif t.status == 'completed' %}
+                        <a href="{{ url_for('leaderboard', tournament_id=t.id) }}" class="btn btn-secondary btn-sm">
+                            <i class="fas fa-check-circle me-1"></i> View Results
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="row">
+    <div class="col-12">
+        <div class="alert alert-warning">
+            No tournaments found in the database. Have you run the seeder script?
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

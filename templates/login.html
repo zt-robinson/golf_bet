@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Login - Virtual Golf Betting{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-4">
+        <div class="card">
+            <div class="card-header text-center">
+                <h3 class="mb-0">
+                    <i class="fas fa-sign-in-alt me-2"></i>
+                    Login to Bet
+                </h3>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Username</label>
+                        <input type="text" class="form-control" id="username" name="username" required>
+                        <div class="form-text">Enter any username to start betting with virtual money</div>
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-sign-in-alt me-2"></i>Start Betting
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 
