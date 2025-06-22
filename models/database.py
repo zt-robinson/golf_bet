@@ -170,8 +170,8 @@ class Database:
 
     def is_regrouped_for_round4(self, tournament_id):
         with self._get_connection() as conn:
-            result = conn.execute('SELECT regrouped_round4 FROM tournaments WHERE id = ?', (tournament_id,)).fetchone()
-            return result and result['regrouped_round4']
+            result = conn.execute('SELECT COUNT(*) as count FROM round_groups WHERE tournament_id = ? AND round_num = 4', (tournament_id,)).fetchone()
+            return result and result['count'] > 0
 
     def get_round_groups(self, tournament_id, round_num):
         with self._get_connection() as conn:
@@ -194,8 +194,6 @@ class Database:
                 for player_id in player_ids:
                     to_insert.append((tournament_id, round_num, group_num, player_id))
             db_conn.executemany('INSERT INTO round_groups (tournament_id, round_num, group_num, player_id) VALUES (?, ?, ?, ?)', to_insert)
-            if round_num == 4:
-                db_conn.execute('UPDATE tournaments SET regrouped_round4 = 1 WHERE id = ?', (tournament_id,))
             if not conn:
                 db_conn.commit()
         finally:

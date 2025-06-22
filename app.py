@@ -115,7 +115,9 @@ def leaderboard(tournament_id):
         round_is_over = False
         if tournament['status'] == 'active' and leaderboard_data:
             # Check if all active players have finished the current round
+            # After cut is applied, only consider players who made the cut
             active_players = [p for p in leaderboard_data if p['status'] != 'cut']
+            
             if active_players:
                 all_finished = all(p['holes_played'] >= 18 for p in active_players)
                 round_is_over = all_finished

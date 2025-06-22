@@ -76,7 +76,15 @@ class SimulationService:
         # Check if the current round is over. If so, pause simulation.
         if steps_this_round >= block_length:
             # Now check if all players have finished the current round
-            total_players = len(db.get_tournament_players(tournament_id, current_round))
+            # For Round 2, we need to check if all active players have finished
+            if current_round == 2:
+                # Get only active players for Round 2
+                active_players = [p for p in players if p['status'] == 'active']
+                total_players = len(active_players)
+            else:
+                # For other rounds, check all players
+                total_players = len(players)
+            
             finished_players = db.count_players_finished_round(tournament_id, current_round)
             if finished_players >= total_players:
                 # If Round 4 is over, the tournament is complete
@@ -87,7 +95,11 @@ class SimulationService:
                 
                 # Special handling for Round 2 - apply cut if not already applied
                 if current_round == 2 and not tournament['cut_applied']:
-                    self._check_and_apply_cut(tournament_id)
+                    try:
+                        self._check_and_apply_cut(tournament_id)
+                    except Exception as e:
+                        print(f"Error applying cut: {e}")
+                        # Even if cut fails, we should still stop the simulation
                 return  # Stop simulation, wait for user to start next round
             else:
                 return  # Wait for all players to finish
@@ -217,5 +229,6 @@ class SimulationService:
             # --- REGROUP PLAYERS FOR ROUND 3 ---
             self.regroup_players(tournament_id, 3, players_made_cut, conn=conn)
             print("Players regrouped for Round 3.")
+            print("Round 2 simulation complete. Waiting for user to start Round 3.")
 
             conn.commit() 
