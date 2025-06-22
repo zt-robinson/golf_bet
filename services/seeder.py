@@ -103,6 +103,148 @@ def generate_course_name():
     # Always add an organization suffix
     return f"{base_name} {random.choice(organizations)}"
 
+def generate_course_characteristics(course_name, course_type, city, state_country):
+    """
+    Generate realistic course characteristics based on course name, type, and location.
+    Returns a dictionary of characteristics that affect player performance.
+    """
+    import random
+    
+    # Base characteristics that all courses have
+    characteristics = {}
+    
+    # Weather conditions (influenced by location and season)
+    # Temperature: 50-95°F, normalized to 0-1 scale
+    base_temp = random.uniform(50, 95)
+    characteristics['avg_temperature'] = (base_temp - 50) / 45.0  # Normalize to 0-1
+    
+    # Humidity: influenced by location (coastal = higher, desert = lower)
+    if any(word in city.lower() for word in ['miami', 'houston', 'new orleans', 'charleston', 'savannah']):
+        base_humidity = random.uniform(0.6, 1.0)  # High humidity areas
+    elif any(word in city.lower() for word in ['phoenix', 'las vegas', 'denver', 'salt lake']):
+        base_humidity = random.uniform(0.0, 0.4)  # Low humidity areas
+    else:
+        base_humidity = random.uniform(0.3, 0.7)  # Moderate humidity
+    characteristics['humidity_level'] = base_humidity
+    
+    # Wind factor: influenced by location and course type
+    if any(word in city.lower() for word in ['chicago', 'dallas', 'oklahoma', 'kansas']):
+        base_wind = random.uniform(0.5, 1.0)  # Windy areas
+    elif any(word in course_name.lower() for word in ['links', 'coastal', 'ocean']):
+        base_wind = random.uniform(0.4, 0.9)  # Links courses tend to be windy
+    else:
+        base_wind = random.uniform(0.1, 0.6)  # Moderate wind
+    characteristics['wind_factor'] = base_wind
+    
+    # Rain probability: influenced by location and season
+    if any(word in city.lower() for word in ['seattle', 'portland', 'atlanta', 'nashville']):
+        rain_prob = random.uniform(0.3, 0.8)  # Rainy areas
+    else:
+        rain_prob = random.uniform(0.1, 0.5)  # Moderate rain
+    characteristics['rain_probability'] = rain_prob
+    
+    # Course design and strategy
+    # Design strategy: influenced by course type and name
+    if any(word in course_name.lower() for word in ['penal', 'championship', 'major', 'pga']):
+        design_strategy = random.uniform(0.7, 1.0)  # More penal
+    elif any(word in course_name.lower() for word in ['resort', 'country club', 'parkland']):
+        design_strategy = random.uniform(0.3, 0.7)  # More strategic
+    else:
+        design_strategy = random.uniform(0.4, 0.8)  # Mixed
+    characteristics['design_strategy'] = design_strategy
+    
+    # Course length: influenced by course type
+    if any(word in course_name.lower() for word in ['championship', 'major', 'pga']):
+        course_length = random.uniform(0.7, 1.0)  # Longer courses
+    elif any(word in course_name.lower() for word in ['executive', 'par 3', 'short']):
+        course_length = random.uniform(0.0, 0.4)  # Shorter courses
+    else:
+        course_length = random.uniform(0.4, 0.8)  # Standard length
+    characteristics['course_length'] = course_length
+    
+    # Narrowness factor: influenced by design strategy
+    if design_strategy > 0.7:
+        narrowness = random.uniform(0.6, 1.0)  # Penal courses tend to be narrower
+    else:
+        narrowness = random.uniform(0.2, 0.7)  # Strategic courses can be wider
+    characteristics['narrowness_factor'] = narrowness
+    
+    # Hazard density: influenced by design strategy and course type
+    if design_strategy > 0.7:
+        hazard_density = random.uniform(0.6, 1.0)  # More hazards on penal courses
+    else:
+        hazard_density = random.uniform(0.2, 0.6)  # Fewer hazards on strategic courses
+    characteristics['hazard_density'] = hazard_density
+    
+    # Course conditions
+    # Green speed: influenced by prestige and maintenance
+    if any(word in course_name.lower() for word in ['championship', 'major', 'pga', 'tour']):
+        green_speed = random.uniform(0.7, 1.0)  # Fast greens on championship courses
+    else:
+        green_speed = random.uniform(0.3, 0.7)  # Moderate green speeds
+    characteristics['green_speed'] = green_speed
+    
+    # Turf firmness: influenced by climate and maintenance
+    if base_temp > 80:  # Hotter climates tend to have firmer turf
+        turf_firmness = random.uniform(0.6, 1.0)
+    else:
+        turf_firmness = random.uniform(0.3, 0.7)
+    characteristics['turf_firmness'] = turf_firmness
+    
+    # Rough length: influenced by course type and maintenance
+    if any(word in course_name.lower() for word in ['championship', 'major', 'pga']):
+        rough_length = random.uniform(0.6, 1.0)  # Longer rough on championship courses
+    else:
+        rough_length = random.uniform(0.2, 0.6)  # Shorter rough on regular courses
+    characteristics['rough_length'] = rough_length
+    
+    # Course prestige and mental factors
+    # Prestige level: influenced by course name and type
+    if any(word in course_name.lower() for word in ['championship', 'major', 'pga', 'tour', 'national']):
+        prestige = random.uniform(0.7, 1.0)  # High prestige
+    elif any(word in course_name.lower() for word in ['country club', 'resort']):
+        prestige = random.uniform(0.4, 0.8)  # Medium prestige
+    else:
+        prestige = random.uniform(0.2, 0.6)  # Lower prestige
+    characteristics['prestige_level'] = prestige
+    
+    # Course age: influenced by course name and type
+    if any(word in course_name.lower() for word in ['old', 'historic', 'classic', 'traditional']):
+        course_age = random.uniform(0.7, 1.0)  # Historic courses
+    elif any(word in course_name.lower() for word in ['new', 'modern', 'contemporary']):
+        course_age = random.uniform(0.0, 0.3)  # New courses
+    else:
+        course_age = random.uniform(0.3, 0.7)  # Mixed age
+    characteristics['course_age'] = course_age
+    
+    # Crowd factor: influenced by prestige and course type
+    if prestige > 0.7:
+        crowd_factor = random.uniform(0.7, 1.0)  # Large crowds at prestigious courses
+    else:
+        crowd_factor = random.uniform(0.2, 0.6)  # Smaller crowds
+    characteristics['crowd_factor'] = crowd_factor
+    
+    # Elevation and terrain
+    # Elevation factor: influenced by location
+    if any(word in state_country.lower() for word in ['colorado', 'utah', 'wyoming', 'montana']):
+        elevation = random.uniform(0.6, 1.0)  # High elevation areas
+    elif any(word in state_country.lower() for word in ['florida', 'louisiana', 'mississippi']):
+        elevation = random.uniform(0.0, 0.2)  # Low elevation areas
+    else:
+        elevation = random.uniform(0.2, 0.6)  # Moderate elevation
+    characteristics['elevation_factor'] = elevation
+    
+    # Terrain difficulty: influenced by location and course type
+    if any(word in state_country.lower() for word in ['colorado', 'utah', 'wyoming', 'montana', 'vermont']):
+        terrain = random.uniform(0.6, 1.0)  # Hilly/mountainous areas
+    elif any(word in course_name.lower() for word in ['mountain', 'alpine', 'highland']):
+        terrain = random.uniform(0.7, 1.0)  # Mountain courses
+    else:
+        terrain = random.uniform(0.1, 0.5)  # Flatter terrain
+    characteristics['terrain_difficulty'] = terrain
+    
+    return characteristics
+
 def seed_database():
     """Populate the database with fictional data based on the new simulation model."""
     fake = Faker()
@@ -513,6 +655,38 @@ def seed_database():
                     (course_name, 'Fictional', course_par, round(random.uniform(0.8, 1.2), 2), city, state_country)
                 )
                 course_id = c.lastrowid
+                
+                # Generate course characteristics that affect player performance
+                course_characteristics = generate_course_characteristics(course_name, 'Fictional', city, state_country)
+                
+                # Save course characteristics to database
+                c.execute('''
+                    INSERT INTO course_characteristics (
+                        course_id, avg_temperature, humidity_level, wind_factor, rain_probability,
+                        design_strategy, course_length, narrowness_factor, hazard_density,
+                        green_speed, turf_firmness, rough_length,
+                        prestige_level, course_age, crowd_factor,
+                        elevation_factor, terrain_difficulty
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    course_id,
+                    course_characteristics['avg_temperature'],
+                    course_characteristics['humidity_level'],
+                    course_characteristics['wind_factor'],
+                    course_characteristics['rain_probability'],
+                    course_characteristics['design_strategy'],
+                    course_characteristics['course_length'],
+                    course_characteristics['narrowness_factor'],
+                    course_characteristics['hazard_density'],
+                    course_characteristics['green_speed'],
+                    course_characteristics['turf_firmness'],
+                    course_characteristics['rough_length'],
+                    course_characteristics['prestige_level'],
+                    course_characteristics['course_age'],
+                    course_characteristics['crowd_factor'],
+                    course_characteristics['elevation_factor'],
+                    course_characteristics['terrain_difficulty']
+                ))
                 
                 holes, total_par = [], 0
                 for hole_num in range(1, 18):

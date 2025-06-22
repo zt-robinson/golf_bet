@@ -207,11 +207,24 @@ class Database:
         finally:
             if not conn:
                 db_conn.close()
-            
+
+    def get_course_with_characteristics(self, course_id, conn=None):
+        """Get course information along with its characteristics in a single query."""
+        db_conn = conn or self._get_connection()
+        try:
+            course = db_conn.execute('SELECT * FROM courses WHERE id = ?', (course_id,)).fetchone()
+            if course:
+                characteristics = db_conn.execute('SELECT * FROM course_characteristics WHERE course_id = ?', (course_id,)).fetchone()
+                course['characteristics'] = characteristics
+            return course
+        finally:
+            if not conn:
+                db_conn.close()
+
     def get_holes_for_course(self, course_id, conn=None):
         db_conn = conn or self._get_connection()
         try:
-            return db_conn.execute('SELECT * FROM holes WHERE course_id = ? ORDER BY hole_number', (course_id,)).fetchall()
+            return db_conn.execute('SELECT * FROM holes WHERE course_id = ? ORDER BY hole_number', course_id).fetchall()
         finally:
             if not conn:
                 db_conn.close()
@@ -220,6 +233,15 @@ class Database:
         db_conn = conn or self._get_connection()
         try:
             return db_conn.execute('SELECT * FROM players ORDER BY overall_skill DESC').fetchall()
+        finally:
+            if not conn:
+                db_conn.close()
+
+    def get_all_courses(self, conn=None):
+        """Get all courses from the database."""
+        db_conn = conn or self._get_connection()
+        try:
+            return db_conn.execute('SELECT * FROM courses ORDER BY name').fetchall()
         finally:
             if not conn:
                 db_conn.close()
@@ -408,7 +430,58 @@ class Database:
         with self._get_connection() as conn:
             conn.execute('UPDATE tournaments SET current_round = ? WHERE id = ?', (round_num, tournament_id))
             conn.commit()
+
+    def get_course_characteristics(self, course_id, conn=None):
+        """Get all characteristics for a specific course."""
+        db_conn = conn or self._get_connection()
+        try:
+            return db_conn.execute('SELECT * FROM course_characteristics WHERE course_id = ?', (course_id,)).fetchone()
+        finally:
+            if not conn:
+                db_conn.close()
+
+    def save_course_characteristics(self, course_id, characteristics, conn=None):
+        """Save or update course characteristics."""
+        db_conn = conn or self._get_connection()
+        try:
+            # Delete existing characteristics for this course
+            db_conn.execute('DELETE FROM course_characteristics WHERE course_id = ?', (course_id,))
             
+            # Insert new characteristics
+            db_conn.execute('''
+                INSERT INTO course_characteristics (
+                    course_id, avg_temperature, humidity_level, wind_factor, rain_probability,
+                    design_strategy, course_length, narrowness_factor, hazard_density,
+                    green_speed, turf_firmness, rough_length,
+                    prestige_level, course_age, crowd_factor,
+                    elevation_factor, terrain_difficulty
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                course_id,
+                characteristics['avg_temperature'],
+                characteristics['humidity_level'],
+                characteristics['wind_factor'],
+                characteristics['rain_probability'],
+                characteristics['design_strategy'],
+                characteristics['course_length'],
+                characteristics['narrowness_factor'],
+                characteristics['hazard_density'],
+                characteristics['green_speed'],
+                characteristics['turf_firmness'],
+                characteristics['rough_length'],
+                characteristics['prestige_level'],
+                characteristics['course_age'],
+                characteristics['crowd_factor'],
+                characteristics['elevation_factor'],
+                characteristics['terrain_difficulty']
+            ))
+            
+            if not conn:
+                db_conn.commit()
+        finally:
+            if not conn:
+                db_conn.close()
+
 db = Database()
 
 def init_db():
@@ -583,6 +656,41 @@ def init_db():
             FOREIGN KEY(user_id) REFERENCES users(id),
             FOREIGN KEY(tournament_id) REFERENCES tournaments(id),
             FOREIGN KEY(player_id) REFERENCES players(id)
+        )
+    ''')
+
+    # New table for course characteristics that affect player performance
+    c.execute('''
+        CREATE TABLE course_characteristics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            course_id INTEGER NOT NULL,
+            -- Weather conditions (0.0 = mild, 1.0 = extreme)
+            avg_temperature REAL NOT NULL, -- Average temperature in Fahrenheit
+            humidity_level REAL NOT NULL, -- 0.0 = dry, 1.0 = very humid
+            wind_factor REAL NOT NULL, -- 0.0 = calm, 1.0 = very windy
+            rain_probability REAL NOT NULL, -- 0.0 = no rain, 1.0 = heavy rain
+            
+            -- Course design and strategy
+            design_strategy REAL NOT NULL, -- 0.0 = strategic/forgiving, 1.0 = penal/demanding
+            course_length REAL NOT NULL, -- 0.0 = short, 1.0 = very long
+            narrowness_factor REAL NOT NULL, -- 0.0 = wide fairways, 1.0 = very narrow
+            hazard_density REAL NOT NULL, -- 0.0 = few hazards, 1.0 = many hazards
+            
+            -- Course conditions
+            green_speed REAL NOT NULL, -- 0.0 = slow, 1.0 = very fast
+            turf_firmness REAL NOT NULL, -- 0.0 = soft, 1.0 = very firm
+            rough_length REAL NOT NULL, -- 0.0 = short rough, 1.0 = very long rough
+            
+            -- Course prestige and mental factors
+            prestige_level REAL NOT NULL, -- 0.0 = local course, 1.0 = major championship venue
+            course_age REAL NOT NULL, -- 0.0 = new course, 1.0 = historic course
+            crowd_factor REAL NOT NULL, -- 0.0 = small crowds, 1.0 = major tournament crowds
+            
+            -- Elevation and terrain
+            elevation_factor REAL NOT NULL, -- 0.0 = sea level, 1.0 = high altitude
+            terrain_difficulty REAL NOT NULL, -- 0.0 = flat, 1.0 = very hilly
+            
+            FOREIGN KEY(course_id) REFERENCES courses(id)
         )
     ''')
 

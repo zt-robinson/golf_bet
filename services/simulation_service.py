@@ -6,9 +6,10 @@ import datetime
 class SimulationService:
     """Handles the logic for simulating golf tournaments."""
 
-    def _calculate_hole_score(self, player_skills, hole_par, hole_difficulty):
+    def _calculate_hole_score(self, player_skills, hole_par, hole_difficulty, course_characteristics=None):
         """
-        Calculates a player's score for a single hole using the new detailed skill system.
+        Calculates a player's score for a single hole using the detailed skill system
+        and course characteristics that affect performance.
         """
         # Extract skills from the player data
         overall_skill = player_skills['overall_skill']
@@ -17,10 +18,108 @@ class SimulationService:
         short_game_skill = player_skills['short_game_skill']
         putting_skill = player_skills['putting_skill']
         
-        # Calculate a weighted skill score based on hole type
-        # For simplicity, we'll use a weighted average of all skills
+        # Base weighted skill calculation
         weighted_skill = (overall_skill * 0.3 + driving_skill * 0.25 + approach_skill * 0.25 + 
                          short_game_skill * 0.15 + putting_skill * 0.05)
+        
+        # Apply course characteristic modifiers
+        if course_characteristics:
+            # Weather effects
+            weather_modifier = 0.0
+            
+            # Temperature effects (extreme temperatures affect performance)
+            temp_factor = abs(course_characteristics['avg_temperature'] - 0.5) * 2  # 0 at 50%, max at extremes
+            weather_modifier += temp_factor * 0.1
+            
+            # Humidity effects (high humidity is more challenging)
+            weather_modifier += course_characteristics['humidity_level'] * 0.05
+            
+            # Wind effects (wind affects all shots)
+            wind_penalty = course_characteristics['wind_factor'] * 0.15
+            weather_modifier += wind_penalty
+            
+            # Rain effects (rain makes conditions more difficult)
+            weather_modifier += course_characteristics['rain_probability'] * 0.1
+            
+            # Course design effects
+            design_modifier = 0.0
+            
+            # Penal vs strategic design
+            if course_characteristics['design_strategy'] > 0.7:
+                # Penal courses favor accuracy over distance
+                accuracy_bonus = (approach_skill + short_game_skill) / 2 - weighted_skill
+                design_modifier += accuracy_bonus * 0.1
+            else:
+                # Strategic courses favor overall skill
+                design_modifier += 0.0  # Neutral effect
+            
+            # Course length effects (longer courses favor driving distance)
+            if course_characteristics['course_length'] > 0.7:
+                driving_bonus = driving_skill - weighted_skill
+                design_modifier += driving_bonus * 0.1
+            
+            # Narrowness effects (narrow courses favor accuracy)
+            if course_characteristics['narrowness_factor'] > 0.7:
+                accuracy_penalty = (weighted_skill - (approach_skill + short_game_skill) / 2) * 0.1
+                design_modifier += accuracy_penalty
+            
+            # Hazard density effects (more hazards = more challenging)
+            hazard_penalty = course_characteristics['hazard_density'] * 0.1
+            design_modifier += hazard_penalty
+            
+            # Course conditions effects
+            conditions_modifier = 0.0
+            
+            # Green speed effects (faster greens favor putting skill)
+            if course_characteristics['green_speed'] > 0.7:
+                putting_bonus = putting_skill - weighted_skill
+                conditions_modifier += putting_bonus * 0.15
+            elif course_characteristics['green_speed'] < 0.3:
+                putting_penalty = (weighted_skill - putting_skill) * 0.1
+                conditions_modifier += putting_penalty
+            
+            # Turf firmness effects (firmer turf affects approach shots)
+            if course_characteristics['turf_firmness'] > 0.7:
+                approach_penalty = (weighted_skill - approach_skill) * 0.1
+                conditions_modifier += approach_penalty
+            
+            # Rough length effects (longer rough affects all shots)
+            rough_penalty = course_characteristics['rough_length'] * 0.1
+            conditions_modifier += rough_penalty
+            
+            # Mental factors
+            mental_modifier = 0.0
+            
+            # Prestige effects (higher prestige = more pressure)
+            prestige_pressure = course_characteristics['prestige_level'] * 0.1
+            mental_modifier += prestige_pressure
+            
+            # Crowd effects (larger crowds = more pressure)
+            crowd_pressure = course_characteristics['crowd_factor'] * 0.05
+            mental_modifier += crowd_pressure
+            
+            # Course age effects (historic courses can be intimidating)
+            if course_characteristics['course_age'] > 0.7:
+                historic_intimidation = 0.05
+                mental_modifier += historic_intimidation
+            
+            # Elevation and terrain effects
+            physical_modifier = 0.0
+            
+            # Elevation effects (high elevation affects distance and stamina)
+            elevation_penalty = course_characteristics['elevation_factor'] * 0.1
+            physical_modifier += elevation_penalty
+            
+            # Terrain difficulty effects (hilly courses are more physically demanding)
+            terrain_penalty = course_characteristics['terrain_difficulty'] * 0.05
+            physical_modifier += terrain_penalty
+            
+            # Apply all modifiers to the weighted skill
+            total_modifier = weather_modifier + design_modifier + conditions_modifier + mental_modifier + physical_modifier
+            weighted_skill += total_modifier * 100  # Scale up the modifier effect
+        else:
+            # No course characteristics available, use base calculation
+            pass
         
         # Base score tendency (lower is better)
         # Higher skill means a score closer to par, but not dramatically better
@@ -149,12 +248,16 @@ class SimulationService:
         tournament = db.get_tournament_by_id(tournament_id)
         holes = db.get_holes_for_course(tournament['course_id'])
         
+        # Get course characteristics for this tournament's course
+        course_characteristics = db.get_course_characteristics(tournament['course_id'])
+        
         if hole_num <= len(holes):
             hole_info = holes[hole_num - 1]
             return self._calculate_hole_score(
                 player,
                 hole_info['par'],
-                hole_info['difficulty_modifier']
+                hole_info['difficulty_modifier'],
+                course_characteristics
             )
         return 4  # Default fallback
 
